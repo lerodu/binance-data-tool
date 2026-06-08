@@ -1,16 +1,24 @@
-"""`binance-data` console tool. Currently covers Binance spot candles.
+"""`binance-data` console tool. Grammar: <action> <exchange> <market> <datatype>.
 
-    binance-data download spot candles --all --interval 1m --workers 16
-    binance-data download spot candles --start-year 2020 --end-year 2025 --interval 1h
-    binance-data consolidate spot candles --all --interval 1m
+    binance-data download binance spot candles --all --interval 1m --workers 16
+    binance-data consolidate binance spot candles --all --interval 1m
+    binance-data capture binance spot orderbook --symbols BTCUSDT,ETHUSDT --duration 1h
 """
 
 import argparse
 from datetime import date
 
-from . import consolidate, download
+from . import capture, consolidate, download
 
 FIRST_YEAR = 2017  # Binance spot launched 2017
+
+
+def _chain(action_parser, exchange, market, datatype, leaf_help):
+    """Build action -> exchange -> market -> datatype and return the leaf parser."""
+    ex = action_parser.add_subparsers(dest="exchange", required=True)
+    mk = ex.add_parser(exchange).add_subparsers(dest="market", required=True)
+    dt = mk.add_parser(market).add_subparsers(dest="datatype", required=True)
+    return dt.add_parser(datatype, help=leaf_help)
 
 
 def _add_year_args(p):
@@ -36,41 +44,51 @@ def _years(args, parser):
     parser.error("specify a time range: --all, --year Y, or --start-year X --end-year Y")
 
 
-def _download_opts(p):
-    p.add_argument("--workers", type=int, default=12)
-    p.add_argument("--symbols", default=None, help="comma list to override discovery")
-    p.add_argument("--recheck-missing", action="store_true",
-                   help="clear .missing markers and re-attempt those months")
-
-
-def _consolidate_opts(p):
-    p.add_argument("--out-prefix", default="klines", help="output filename prefix")
-
-
-def _spot_candles_leaf(action_parser, opts_fn, leaf_help):
-    """action -> spot -> candles; attaches year args + action-specific opts."""
-    market = action_parser.add_subparsers(dest="market", required=True)
-    spot = market.add_parser("spot", help="spot market")
-    datatype = spot.add_subparsers(dest="datatype", required=True)
-    leaf = datatype.add_parser("candles", help=leaf_help)
-    _add_year_args(leaf)
-    opts_fn(leaf)
+def _duration_s(v):
+    if not v:
+        return None
+    v = str(v).strip().lower()
+    units = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    return int(v[:-1]) * units[v[-1]] if v[-1] in units else int(v)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="binance-data",
-                                 description="Fetch Binance market data from data.binance.vision.")
+                                 description="Fetch Binance market data from data.binance.vision "
+                                             "(candles) and live websockets (order book).")
     actions = ap.add_subparsers(dest="action", required=True)
 
-    dl = actions.add_parser("download", help="fetch raw data zips into the cache")
-    _spot_candles_leaf(dl, _download_opts, "download spot OHLCV candles (klines)")
+    dl = _chain(actions.add_parser("download", help="fetch candle zips into the cache"),
+                "binance", "spot", "candles", "download spot OHLCV candles")
+    _add_year_args(dl)
+    dl.add_argument("--workers", type=int, default=12)
+    dl.add_argument("--symbols", default=None, help="comma list to override discovery")
+    dl.add_argument("--recheck-missing", action="store_true",
+                    help="clear .missing markers and re-attempt those months")
 
-    co = actions.add_parser("consolidate", help="build one .npy per year from the cache")
-    _spot_candles_leaf(co, _consolidate_opts, "consolidate cached spot candles")
+    co = _chain(actions.add_parser("consolidate", help="build one .npy per year from the cache"),
+                "binance", "spot", "candles", "consolidate cached spot candles")
+    _add_year_args(co)
+    co.add_argument("--out-prefix", default="klines", help="output filename prefix")
+
+    cap = _chain(actions.add_parser("capture", help="live-capture market data to a raw log"),
+                 "binance", "spot", "orderbook", "live-capture the spot order book + trades")
+    cap.add_argument("--symbols", required=True, help="comma list, e.g. BTCUSDT,ETHUSDT")
+    cap.add_argument("--duration", default=None, help="run length, e.g. 1h, 30m, 3600 (default: until Ctrl-C)")
+    cap.add_argument("--out", default="lob_capture", help="output directory for the raw log")
+    cap.add_argument("--rotate", type=int, default=60, help="rotate the log file every N minutes (0 = never)")
 
     args = ap.parse_args(argv)
-    years = _years(args, ap)
 
+    if args.action == "capture":
+        symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
+        writer = capture.RawWriter(args.out, f"{args.exchange}_{args.market}_{args.datatype}",
+                                   rotate_min=args.rotate)
+        adapter = capture.EXCHANGES[args.exchange][args.market][args.datatype](symbols, writer)
+        capture.run(adapter, writer, _duration_s(args.duration))
+        return
+
+    years = _years(args, ap)
     if args.action == "download":
         download.run(years, cache=args.cache, interval=args.interval, workers=args.workers,
                      symbols=args.symbols, recheck_missing=args.recheck_missing)
