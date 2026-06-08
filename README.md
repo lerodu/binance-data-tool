@@ -1,20 +1,23 @@
-# binance-data-tool
+# mktdata
 
-Fetches data from binance API and S3 archive and consolidates them into .npy files
+Acquire exchange market data: historical candles from the data.binance.vision S3 archive, and live order-book capture over websockets.
+
+Command grammar: `mktdata <action> <exchange> <market> <datatype> [options]`.
 
 ```bash
 uv sync
-uv run binance-data download spot candles --all --interval 1m --workers 16
-uv run binance-data consolidate spot candles --all --interval 1m
+mktdata download binance spot candles --all --interval 1m --workers 16
+mktdata consolidate binance spot candles --all --interval 1m
+mktdata capture binance spot orderbook --symbols BTCUSDT,ETHUSDT --duration 1h
 ```
 
-A time range (`--all`, `--year`, or `--start-year` + `--end-year`) and `--interval` are required on both commands.
+(Run via `uv run mktdata ...` inside the project.)
 
 # Commands
 
-## download spot candles
+## download binance spot candles
 
-Downloads the monthly kline zips for every spot symbol into a local cache.
+Downloads the monthly kline zips for every spot symbol into a local cache. A time range (`--all`, `--year`, or `--start-year` + `--end-year`) and `--interval` are required.
 
 - Discovers all spot symbols including delisted ones by paginating the S3 bucket listing.
 - Verifies each zip (CRC plus SHA256 against the published `.CHECKSUM`) before renaming it into the cache, so a cached file is always correct.
@@ -32,9 +35,9 @@ Downloads the monthly kline zips for every spot symbol into a local cache.
 | `--symbols LIST` | discover all | Comma list to download instead of scanning the bucket, e.g. `BTCUSDT,ETHUSDT`. |
 | `--recheck-missing` | off | Clear `.missing` markers and re-attempt months previously seen as 404. |
 
-## consolidate spot candles
+## consolidate binance spot candles
 
-Builds one aligned `.npy` per year from the cached zips.
+Builds one aligned `.npy` per year from the cached zips. Same time-range and `--interval` requirements as download.
 
 - Includes only the symbols that have data in that year.
 - Places each candle at row index `(open_time - year_start) / interval`, leaving missing bars as `NaN`.
@@ -50,3 +53,21 @@ Builds one aligned `.npy` per year from the cached zips.
 
 Output per year: `klines_<year>.npy` shape `(n_symbols, bars, 9)` float32 (NaN where missing) plus `klines_<year>.meta.json` (symbol order, columns, interval, completion marker).
 Columns: open, high, low, close, volume, quote_vol, trades, taker_buy_base, taker_buy_quote.
+
+## capture binance spot orderbook
+
+Live-captures the order book to a raw event log (order book has no archive, so it must be captured live). Writes every websocket message verbatim; the offline replay into arrays lives in the research repo, not here.
+
+- Records depth diffs (`@depth@100ms`) + periodic REST snapshots + `@aggTrade`, time-ordered in one gzipped JSONL log.
+- Maintains the book via Binance's local-book procedure with update-id gap detection and per-symbol resync (the new snapshot is logged so replay can rebuild the book).
+- On connection loss the capture stops rather than reconnecting, so a log never contains an unmarked gap; restart to resume in a fresh file.
+- Rotates the log file on a time interval so a long run is a sequence of complete files, not one monolith.
+
+| Option | Default | Description |
+|---|---|---|
+| `--symbols LIST` | required | Comma list to capture, e.g. `BTCUSDT,ETHUSDT`. |
+| `--duration D` | until Ctrl-C | Run length, e.g. `1h`, `30m`, `3600`. |
+| `--out DIR` | `lob_capture` | Output directory for the raw log files. |
+| `--rotate N` | `60` | Rotate the log file every N minutes (`0` = never). |
+
+Record line: `{"t": <recv unix>, "v": "binance", "m": <message>[, "k": "rest_snapshot", "sym": ...]}`.

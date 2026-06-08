@@ -1,8 +1,8 @@
-"""`binance-data` console tool. Grammar: <action> <exchange> <market> <datatype>.
+"""`mktdata` console tool. Grammar: <action> <exchange> <market> <datatype>.
 
-    binance-data download binance spot candles --all --interval 1m --workers 16
-    binance-data consolidate binance spot candles --all --interval 1m
-    binance-data capture binance spot orderbook --symbols BTCUSDT,ETHUSDT --duration 1h
+    mktdata download binance spot candles --all --interval 1m --workers 16
+    mktdata consolidate binance spot candles --all --interval 1m
+    mktdata capture binance spot orderbook --symbols BTCUSDT,ETHUSDT --duration 1h
 """
 
 import argparse
@@ -53,7 +53,7 @@ def _duration_s(v):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="binance-data",
+    ap = argparse.ArgumentParser(prog="mktdata",
                                  description="Fetch Binance market data from data.binance.vision "
                                              "(candles) and live websockets (order book).")
     actions = ap.add_subparsers(dest="action", required=True)
