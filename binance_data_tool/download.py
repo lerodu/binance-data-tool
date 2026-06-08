@@ -81,11 +81,9 @@ def download_one(sym, ym, cache, interval):
     return "err"  # not marked .missing, so a re-run retries it
 
 
-def run(years, cache, interval="1m", workers=12, quote=None, symbols=None,
-        recheck_missing=False):
-    syms = discover_symbols(quote, symbols)
-    print(f"{len(syms)} spot symbols, years {years[0]}-{years[-1]}"
-          + (f" (quote={quote})" if quote else ""), flush=True)
+def run(years, cache, interval="1m", workers=12, symbols=None, recheck_missing=False):
+    syms = discover_symbols(symbols)
+    print(f"{len(syms)} spot symbols, years {years[0]}-{years[-1]}", flush=True)
     os.makedirs(cache, exist_ok=True)
     if recheck_missing:  # clear 404 markers so those months are retried
         cleared = 0
@@ -96,7 +94,7 @@ def run(years, cache, interval="1m", workers=12, quote=None, symbols=None,
         print(f"recheck-missing: cleared {cleared} markers", flush=True)
     # symbol list is year-independent; consolidate reads it per year
     for year in years:
-        json.dump({"symbols": syms, "year": year, "interval": interval, "quote": quote},
+        json.dump({"symbols": syms, "year": year, "interval": interval},
                   open(os.path.join(cache, SYMS_FILE.format(year=year)), "w"))
 
     tasks = [(s, ym) for year in years for ym in months(year) for s in syms

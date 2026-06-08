@@ -98,7 +98,7 @@ def _list_page(marker):
     return prefixes, next_marker
 
 
-def discover_symbols(quote=None, symbols_override=None):
+def discover_symbols(symbols_override=None):
     """Scan the entire S3 bucket (paginated) so DELISTED symbols are included."""
     if symbols_override:
         return [s.strip().upper() for s in symbols_override.split(",")]
@@ -111,10 +111,7 @@ def discover_symbols(quote=None, symbols_override=None):
         print(f"  listed page {pages}: {len(syms)} symbols so far", flush=True)
         if not marker:
             break
-    syms = sorted(set(syms))
-    if quote:
-        syms = [s for s in syms if s.endswith(quote)]
-    return syms
+    return sorted(set(syms))
 
 
 def parse_zip(path, year, interval):

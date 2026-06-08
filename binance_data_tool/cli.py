@@ -1,8 +1,8 @@
 """`binance-data` console tool. Currently covers Binance spot candles.
 
-    binance-data download spot candles --all --workers 16
-    binance-data download spot candles --start-year 2020 --end-year 2025 --quote USDT
-    binance-data consolidate spot candles --all
+    binance-data download spot candles --all --interval 1m --workers 16
+    binance-data download spot candles --start-year 2020 --end-year 2025 --interval 1h
+    binance-data consolidate spot candles --all --interval 1m
 """
 
 import argparse
@@ -14,26 +14,30 @@ FIRST_YEAR = 2017  # Binance spot launched 2017
 
 
 def _add_year_args(p):
+    # time range is required: exactly one of --all / --year / (--start-year + --end-year)
     p.add_argument("--all", action="store_true",
                    help=f"everything: {FIRST_YEAR} through the current year")
-    p.add_argument("--year", type=int, help="single year (shortcut for equal start/end)")
-    p.add_argument("--start-year", type=int, default=FIRST_YEAR)
-    p.add_argument("--end-year", type=int, default=date.today().year)
-    p.add_argument("--interval", default="1m")
+    p.add_argument("--year", type=int, help="single year")
+    p.add_argument("--start-year", type=int, help="first year (with --end-year)")
+    p.add_argument("--end-year", type=int, help="last year (with --start-year)")
+    p.add_argument("--interval", required=True, help="bar length, e.g. 1m, 5m, 1h, 1d, 1w")
     p.add_argument("--cache", default="vision_cache", help="download cache directory")
 
 
-def _years(args):
+def _years(args, parser):
     if args.all:
+        if args.year or args.start_year or args.end_year:
+            parser.error("--all cannot be combined with --year/--start-year/--end-year")
         return list(range(FIRST_YEAR, date.today().year + 1))
     if args.year is not None:
         return [args.year]
-    return list(range(args.start_year, args.end_year + 1))
+    if args.start_year is not None and args.end_year is not None:
+        return list(range(args.start_year, args.end_year + 1))
+    parser.error("specify a time range: --all, --year Y, or --start-year X --end-year Y")
 
 
 def _download_opts(p):
     p.add_argument("--workers", type=int, default=12)
-    p.add_argument("--quote", default=None, help="filter base quote, e.g. USDT")
     p.add_argument("--symbols", default=None, help="comma list to override discovery")
     p.add_argument("--recheck-missing", action="store_true",
                    help="clear .missing markers and re-attempt those months")
@@ -65,12 +69,11 @@ def main(argv=None):
     _spot_candles_leaf(co, _consolidate_opts, "consolidate cached spot candles")
 
     args = ap.parse_args(argv)
-    years = _years(args)
+    years = _years(args, ap)
 
     if args.action == "download":
         download.run(years, cache=args.cache, interval=args.interval, workers=args.workers,
-                     quote=args.quote, symbols=args.symbols,
-                     recheck_missing=args.recheck_missing)
+                     symbols=args.symbols, recheck_missing=args.recheck_missing)
     elif args.action == "consolidate":
         consolidate.run(years, cache=args.cache, interval=args.interval,
                         out_prefix=args.out_prefix)
