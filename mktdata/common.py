@@ -19,7 +19,7 @@ COLS = ["open", "high", "low", "close", "volume", "quote_vol", "trades",
         "taker_buy_base", "taker_buy_quote"]
 SRC_IDX = [1, 2, 3, 4, 5, 7, 8, 9, 10]  # kline-csv column indices for COLS
 
-SYMS_FILE = "symbols_{year}.json"  # written by download, read by consolidate
+SYMS_FILE = "download_manifest_{year}.json"  # written by download, read by consolidate
 
 
 def months(year):

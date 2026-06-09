@@ -70,6 +70,8 @@ def main(argv=None):
                 "binance", "spot", "candles", "consolidate cached spot candles")
     _add_year_args(co)
     co.add_argument("--out-prefix", default="klines", help="output filename prefix")
+    co.add_argument("--workers", type=int, default=1, help="parallel symbol-parsing processes")
+    co.add_argument("--force", action="store_true", help="rebuild years already marked complete")
 
     cap = _chain(actions.add_parser("capture", help="live-capture market data to a raw log"),
                  "binance", "spot", "orderbook", "live-capture the spot order book + trades")
@@ -94,7 +96,7 @@ def main(argv=None):
                      symbols=args.symbols, recheck_missing=args.recheck_missing)
     elif args.action == "consolidate":
         consolidate.run(years, cache=args.cache, interval=args.interval,
-                        out_prefix=args.out_prefix)
+                        out_prefix=args.out_prefix, workers=args.workers, force=args.force)
 
 
 if __name__ == "__main__":

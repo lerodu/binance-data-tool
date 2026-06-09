@@ -49,10 +49,13 @@ Builds one aligned `.npy` per year from the cached zips. Same time-range and `--
 | `--all` / `--year` / `--start-year` / `--end-year` | required | Which years to consolidate (one of these). |
 | `--interval S` | required | Bar length; must match what was downloaded. |
 | `--cache DIR` | `vision_cache` | Directory to read the zips from. |
-| `--out-prefix P` | `klines` | Output files are `P_<year>.npy` + `P_<year>.meta.json`. |
+| `--out-prefix P` | `klines` | Output files are `P_<interval>_<year>.npy` + `.meta.json`. |
+| `--workers N` | `1` | Parallel symbol-parsing processes. |
+| `--force` | off | Rebuild years already marked complete (default skips them). |
 
-Output per year: `klines_<year>.npy` shape `(n_symbols, bars, 9)` float32 (NaN where missing) plus `klines_<year>.meta.json` (symbol order, columns, interval, completion marker).
+Output per year: `klines_<interval>_<year>.npy` (e.g. `klines_1m_2025.npy`) shape `(n_symbols, bars, 9)` float32 (NaN where missing) plus `klines_<interval>_<year>.meta.json` (symbol order, columns, interval, completion marker).
 Columns: open, high, low, close, volume, quote_vol, trades, taker_buy_base, taker_buy_quote.
+Resumable: a year whose `.npy` + complete `.meta.json` exist is skipped unless `--force`. The download writes `download_manifest_<year>.json` into the cache (the symbol universe consolidate reads).
 
 ## capture binance spot orderbook
 
