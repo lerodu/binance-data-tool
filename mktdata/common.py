@@ -12,8 +12,16 @@ import numpy as np
 
 # the website root serves HTML; the raw S3 XML listing lives at the bucket endpoint
 LIST_HOST = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
-BASE = "https://data.binance.vision/data/spot/monthly/klines"
-PREFIX = "data/spot/monthly/klines/"
+# market -> archive sub-path. spot, USD-margined futures (um), coin-margined (cm).
+MARKET_PATH = {"spot": "spot", "um": "futures/um", "cm": "futures/cm"}
+
+
+def base_url(market):
+    return f"https://data.binance.vision/data/{MARKET_PATH[market]}/monthly/klines"
+
+
+def prefix(market):
+    return f"data/{MARKET_PATH[market]}/monthly/klines/"
 
 COLS = ["open", "high", "low", "close", "volume", "quote_vol", "trades",
         "taker_buy_base", "taker_buy_quote"]
@@ -71,9 +79,9 @@ def zip_path(cache, sym, interval, ym):
     return os.path.join(cache, sym, f"{sym}-{interval}-{ym}.zip")
 
 
-def _list_page(marker):
+def _list_page(market, marker):
     """One page of the S3 bucket listing (XML). Returns (prefixes, next_marker)."""
-    params = {"delimiter": "/", "prefix": PREFIX}
+    params = {"delimiter": "/", "prefix": prefix(market)}
     if marker:
         params["marker"] = marker
     url = f"{LIST_HOST}/?" + urllib.parse.urlencode(params)
@@ -98,14 +106,14 @@ def _list_page(marker):
     return prefixes, next_marker
 
 
-def discover_symbols(symbols_override=None):
-    """Scan the entire S3 bucket (paginated) so DELISTED symbols are included."""
+def discover_symbols(market, symbols_override=None):
+    """Scan the market's S3 bucket (paginated) so DELISTED symbols are included."""
     if symbols_override:
         return [s.strip().upper() for s in symbols_override.split(",")]
     syms, marker, pages = [], None, 0
     while True:
-        prefixes, marker = _list_page(marker)
-        for p in prefixes:                       # e.g. data/spot/monthly/klines/BTCUSDT/
+        prefixes, marker = _list_page(market, marker)
+        for p in prefixes:                       # e.g. data/<market>/monthly/klines/BTCUSDT/
             syms.append(p.rstrip("/").split("/")[-1])
         pages += 1
         print(f"  listed page {pages}: {len(syms)} symbols so far", flush=True)

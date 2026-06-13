@@ -13,6 +13,8 @@ mktdata capture binance spot orderbook --symbols BTCUSDT,ETHUSDT --duration 1h
 
 (Run via `uv run mktdata ...` inside the project.)
 
+Candles support three markets: `spot`, `um` (USD-margined futures), `cm` (coin-margined futures), e.g. `mktdata download binance um candles --all --interval 1m`. Each market gets its own default cache and output prefix so they don't collide: cache `vision_cache[_<market>]`, outputs `klines[_<market>]_<interval>_<year>.npy`. (Live `capture` is spot order book only for now.)
+
 # Commands
 
 ## download binance spot candles

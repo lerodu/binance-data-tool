@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from tqdm import tqdm
 
-from .common import BASE, SYMS_FILE, discover_symbols, months, zip_path
+from .common import SYMS_FILE, base_url, discover_symbols, months, zip_path
 
 
 def expected_sha(url):
@@ -41,7 +41,7 @@ def valid_zip(data):
         return False
 
 
-def download_one(sym, ym, cache, interval):
+def download_one(sym, ym, cache, interval, market):
     """Fetch+verify one monthly zip if absent. Returns 'ok'|'skip'|'missing'|'err'.
 
     A zip is only moved to its final name after passing verification, so any file
@@ -52,7 +52,7 @@ def download_one(sym, ym, cache, interval):
         return "skip"  # present at final name => already verified when written
     os.makedirs(os.path.dirname(path), exist_ok=True)
     q = urllib.parse.quote(sym, safe="")  # handle non-ASCII / odd symbols
-    url = f"{BASE}/{q}/{interval}/{q}-{interval}-{ym}.zip"
+    url = f"{base_url(market)}/{q}/{interval}/{q}-{interval}-{ym}.zip"
     for attempt in range(3):
         try:
             with urllib.request.urlopen(url, timeout=120) as r:
@@ -81,9 +81,9 @@ def download_one(sym, ym, cache, interval):
     return "err"  # not marked .missing, so a re-run retries it
 
 
-def run(years, cache, interval="1m", workers=12, symbols=None, recheck_missing=False):
-    syms = discover_symbols(symbols)
-    print(f"{len(syms)} spot symbols, years {years[0]}-{years[-1]}", flush=True)
+def run(years, cache, market="spot", interval="1m", workers=12, symbols=None, recheck_missing=False):
+    syms = discover_symbols(market, symbols)
+    print(f"{len(syms)} {market} symbols, years {years[0]}-{years[-1]}", flush=True)
     os.makedirs(cache, exist_ok=True)
     if recheck_missing:  # clear 404 markers so those months are retried
         cleared = 0
@@ -102,7 +102,7 @@ def run(years, cache, interval="1m", workers=12, symbols=None, recheck_missing=F
     print(f"download: {len(tasks)} (symbol,month) zips, {workers} workers", flush=True)
     counts = {"ok": 0, "skip": 0, "missing": 0, "err": 0}
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(download_one, s, ym, cache, interval): (s, ym)
+        futs = {ex.submit(download_one, s, ym, cache, interval, market): (s, ym)
                 for s, ym in tasks}
         bar = tqdm(as_completed(futs), total=len(tasks), unit="zip", smoothing=0.02)
         for fut in bar:
