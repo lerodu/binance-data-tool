@@ -11,9 +11,79 @@ import argparse
 from datetime import date
 
 from . import capture, consolidate, download
+from .sources import SOURCES, get_source
+from .sources import download as rdl
+from .sources import ingest as ring
+from .sources import materialize as rmat
+from .sources.sink import make_sink
 
 FIRST_YEAR = 2017          # Binance spot launched 2017
 MARKETS = ("spot", "um", "cm")  # spot, USD-margined futures, coin-margined futures
+
+
+def _csv(v):
+    return [x.strip() for x in v.split(",")] if v else None
+
+
+def _parse_dexes(arg, src):
+    if not src.by_dex:
+        return [""]
+    if not arg:
+        return ["hyperliquid"]
+    if arg == "all":
+        return sorted(set(src.discover_dexes()) | {"hyperliquid"})
+    return _csv(arg)
+
+
+def _print_info():
+    """Show every external-archive source and the data types it carries."""
+    print("External-archive sources (use: mktdata download <source> <datatype> ...)\n")
+    for sname, src in SOURCES.items():
+        auth = "requester-pays (AWS creds required)" if src.requester_pays else "anonymous"
+        print(f"● {sname}")
+        print(f"    bucket s3://{src.bucket}  ({src.region}, {auth})")
+        if src.note:
+            print(f"    {src.note}")
+        for dt in src.datatypes.values():
+            print(f"      - {dt.name:<11} {dt.note}")
+        print()
+    print("Binance (historical candles) — unchanged grammar:")
+    print("    mktdata download binance {spot,um,cm} candles --all --interval 1m")
+    print("    mktdata consolidate binance {spot,um,cm} candles --all --interval 1m  (-> .npy)\n")
+    print("Funding rate / open interest / mark+oracle price: hyperliquid-archive asset-ctxs")
+    print("  (Hydromancer Reservoir does NOT carry funding — candles/fills/orderbook/snapshots only)")
+
+
+def _register_sources(ex, action):
+    """Register source-first grammar: <source> <datatype> + flags, for the new
+    external archives (hydromancer-reservoir, hyperliquid-archive). `ex` is an
+    existing exchange-subparsers object (shared with binance under `download`)."""
+    for sname, src in SOURCES.items():
+        dts = ex.add_parser(sname).add_subparsers(dest="datatype", required=True)
+        for dtname in src.datatypes:
+            leaf = dts.add_parser(dtname)
+            leaf.add_argument("--cache", default="hl_cache")
+            if action == "download":
+                leaf.add_argument("--dex", default=None, help="comma list or 'all' (default hyperliquid)")
+                leaf.add_argument("--asset-class", default="perp")
+                leaf.add_argument("--coins", default=None, help="comma list (per-coin types)")
+                leaf.add_argument("--start", required=True, help="YYYY-MM-DD")
+                leaf.add_argument("--end", required=True, help="YYYY-MM-DD")
+                leaf.add_argument("--workers", type=int, default=8)
+                leaf.add_argument("--recheck-missing", action="store_true")
+            elif action == "consolidate":
+                # one verb; output format is a --sink option (sql | csv | dense npy)
+                leaf.add_argument("--sink", default="sqlite", choices=["sqlite", "csv", "npy"],
+                                  help="destination: sqlite/csv (faithful store) or npy (dense research slice)")
+                leaf.add_argument("--db", default="hl.sqlite", help="sqlite path (--sink sqlite)")
+                leaf.add_argument("--out", default=None, help="csv dir or .npy path (--sink csv/npy)")
+                leaf.add_argument("--force", action="store_true", help="re-ingest already-done files")
+                # npy-slice options (only used by --sink npy)
+                leaf.add_argument("--interval", default="1m", help="resample interval for --sink npy")
+                leaf.add_argument("--dex", default=None, help="comma list (npy filter)")
+                leaf.add_argument("--coins", default=None, help="comma list (npy filter)")
+                leaf.add_argument("--start", default=None, help="YYYY-MM-DD (npy slice)")
+                leaf.add_argument("--end", default=None, help="YYYY-MM-DD (npy slice)")
 
 
 def _chain(action_parser, exchange, market, datatype, leaf_help):
@@ -24,10 +94,9 @@ def _chain(action_parser, exchange, market, datatype, leaf_help):
     return dt.add_parser(datatype, help=leaf_help)
 
 
-def _candles_chain(action_parser, add_args):
-    """binance -> {spot,um,cm} -> candles, applying add_args to each market leaf."""
-    mk = action_parser.add_subparsers(dest="exchange", required=True) \
-        .add_parser("binance").add_subparsers(dest="market", required=True)
+def _binance_candles(ex, add_args):
+    """binance -> {spot,um,cm} -> candles on an existing exchange-subparsers `ex`."""
+    mk = ex.add_parser("binance").add_subparsers(dest="market", required=True)
     for m in MARKETS:
         leaf = mk.add_parser(m).add_subparsers(dest="datatype", required=True).add_parser("candles")
         add_args(leaf)
@@ -92,8 +161,18 @@ def main(argv=None):
         leaf.add_argument("--workers", type=int, default=1, help="parallel symbol-parsing processes")
         leaf.add_argument("--force", action="store_true", help="rebuild years already complete")
 
-    _candles_chain(actions.add_parser("download", help="fetch candle zips into the cache"), _dl_args)
-    _candles_chain(actions.add_parser("consolidate", help="build one .npy per year"), _co_args)
+    # download: binance candle zips + external-archive sources (reservoir / hl-archive)
+    dl_ex = actions.add_parser("download", help="fetch into the cache") \
+        .add_subparsers(dest="exchange", required=True)
+    _binance_candles(dl_ex, _dl_args)
+    _register_sources(dl_ex, "download")
+    # consolidate: build a store from the cache. binance -> .npy/year; sources -> --sink {sqlite,csv,npy}
+    co_ex = actions.add_parser("consolidate", help="build a store from the cache (--sink for sources)") \
+        .add_subparsers(dest="exchange", required=True)
+    _binance_candles(co_ex, _co_args)
+    _register_sources(co_ex, "consolidate")
+    # info: show every source and the data types it carries
+    actions.add_parser("info", help="list sources and available data types")
 
     cap = _chain(actions.add_parser("capture", help="live-capture market data to a raw log"),
                  "binance", "spot", "orderbook", "live-capture the spot order book + trades")
@@ -110,6 +189,35 @@ def main(argv=None):
                                    rotate_min=args.rotate)
         adapter = capture.EXCHANGES[args.exchange][args.market][args.datatype](symbols, writer)
         capture.run(adapter, writer, _duration_s(args.duration))
+        return
+
+    if args.action == "info":
+        _print_info()
+        return
+
+    # external-archive sources (source-first grammar): download / consolidate
+    if getattr(args, "exchange", None) in SOURCES:
+        src = get_source(args.exchange)
+        if args.action == "download":
+            rdl.run(src, args.datatype, dexes=_parse_dexes(args.dex, src),
+                    asset_class=args.asset_class, start=args.start, end=args.end,
+                    coins=_csv(args.coins), cache=args.cache, workers=args.workers,
+                    recheck_missing=args.recheck_missing)
+        elif args.action == "consolidate":
+            if args.sink == "npy":
+                if args.datatype != "candles":
+                    ap.error("--sink npy is only for candles (dense OHLCV array)")
+                if not (args.start and args.end):
+                    ap.error("--sink npy requires --start and --end")
+                rmat.from_cache(src.name, args.cache, dexes=_csv(args.dex), coins=_csv(args.coins),
+                                start=args.start, end=args.end, interval=args.interval,
+                                out=args.out or "hl_klines.npy")
+            else:
+                sink = make_sink(args.sink, db=args.db, out=args.out or "hl_dump")
+                try:
+                    ring.run(src, args.datatype, sink, cache=args.cache, force=args.force)
+                finally:
+                    sink.close()
         return
 
     years = _years(args, ap)
